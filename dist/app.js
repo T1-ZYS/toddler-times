@@ -12,8 +12,26 @@ $$('[data-copy]').forEach(el=>{original.set(el.dataset.copy,el.innerHTML);if(typ
 const mediaDB=new Promise(resolve=>{if(!window.indexedDB)return resolve(null);const req=indexedDB.open('toddler-times-family-oct16',1);req.onupgradeneeded=()=>req.result.createObjectStore('files');req.onsuccess=()=>resolve(req.result);req.onerror=()=>resolve(null)});
 async function saveMedia(id,file){const db=await mediaDB;if(!db)return false;return new Promise(resolve=>{try{const tx=db.transaction('files','readwrite');tx.objectStore('files').put(file,id);tx.oncomplete=()=>resolve(true);tx.onerror=()=>resolve(false);tx.onabort=()=>resolve(false)}catch{resolve(false)}})}
 async function clearMedia(){const db=await mediaDB;if(!db)return;return new Promise(resolve=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').clear();tx.oncomplete=resolve;tx.onerror=resolve})}
-function stop(box){playing.delete(box);const video=$('video',box);if(video)video.pause();box.classList.remove('is-playing');$('.media-hit',box)?.setAttribute('aria-pressed','false')}
-async function start(box){if(!motion||editing)return;$$('.media').forEach(other=>{if(other!==box)stop(other)});const video=$('video',box);box.classList.add('is-playing');playing.add(box);$('.media-hit',box).setAttribute('aria-pressed','true');if(video){try{await video.play()}catch{stop(box);notice('视频暂时无法播放，请重试或替换素材。')}}}
+// A paused or superseded play request is cancellation, not a broken video.
+const playRequests=new WeakMap();
+function stop(box){playRequests.delete(box);playing.delete(box);const video=$('video',box);if(video)video.pause();box.classList.remove('is-playing');$('.media-hit',box)?.setAttribute('aria-pressed','false')}
+async function start(box){
+ if(!motion||editing||playing.has(box))return;
+ $$('.media').forEach(other=>{if(other!==box)stop(other)});
+ const video=$('video',box),request={};playRequests.set(box,request);
+ box.classList.add('is-playing');playing.add(box);$('.media-hit',box)?.setAttribute('aria-pressed','true');
+ if(!video)return;
+ try{await video.play()}
+ catch(error){
+  // Pointer leave, another card, editing, or a dialog can pause pending play().
+  // Never let an old rejection stop a newer playback request.
+  if(playRequests.get(box)!==request)return;
+  stop(box);
+  if(error.name==='AbortError'||error.name==='NotAllowedError')return;
+  console.warn('Video playback failed',box.dataset.media,error);
+  notice('视频暂时无法播放，请重试或替换素材。');
+ }
+}
 function toggle(box){if(editing)return;if(!motion){motion=true;updateMotion()}box.classList.contains('is-playing')?stop(box):start(box)}
 function formatDuration(seconds){const total=Math.max(1,Math.ceil(seconds));return `${Math.floor(total/60)}:${String(total%60).padStart(2,'0')}`}
 function renderMedia(box){
